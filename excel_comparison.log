@@ -1,0 +1,114 @@
+2025-10-01 23:38:18,324 - ERROR - Comparison failed: File not found: old_file.xlsx
+Traceback (most recent call last):
+  File "C:\Users\penta\OneDrive\Desktop\Python Excel\excel_compare.py", line 496, in main
+    comparator = ExcelComparator(
+                 ^^^^^^^^^^^^^^^^
+  File "C:\Users\penta\OneDrive\Desktop\Python Excel\excel_compare.py", line 72, in __init__
+    raise FileNotFoundError(f"File not found: {file1_path}")
+FileNotFoundError: File not found: old_file.xlsx
+2025-10-01 23:39:32,910 - INFO - Starting comparison: SampleData.xlsx vs SampleData1.xlsx
+2025-10-01 23:39:32,910 - INFO - 
+============================================================
+2025-10-01 23:39:32,918 - INFO - Processing sheet: Sample Orders
+2025-10-01 23:39:32,918 - INFO - ============================================================
+2025-10-01 23:39:33,251 - INFO - Read sheet 'Sample Orders' from SampleData.xlsx: 44 rows
+2025-10-01 23:39:33,282 - INFO - Read sheet 'Sample Orders' from SampleData1.xlsx: 43 rows
+2025-10-01 23:39:33,282 - INFO - Sheet 'Sample Orders': Auto-detected key column: orderdate
+2025-10-01 23:39:33,288 - INFO - Finding duplicates...
+2025-10-01 23:39:33,293 - INFO - Finding new records...
+2025-10-01 23:39:33,293 - INFO - Finding deleted records...
+2025-10-01 23:39:33,293 - INFO - Finding modified records...
+2025-10-01 23:39:33,332 - INFO - 
+Sheet 'Sample Orders' Summary:
+2025-10-01 23:39:33,332 - INFO -   Key Column: orderdate
+2025-10-01 23:39:33,332 - INFO -   New Records: 0
+2025-10-01 23:39:33,332 - INFO -   Deleted Records: 1
+2025-10-01 23:39:33,332 - INFO -   Modified Records: 3
+2025-10-01 23:39:33,332 - INFO -   Duplicates in File1: 0
+2025-10-01 23:39:33,332 - INFO -   Duplicates in File2: 0
+2025-10-01 23:39:33,335 - INFO - 
+Generating report: comparison_report_20251001_233933.xlsx
+2025-10-01 23:39:33,529 - ERROR - Comparison failed: 'collections.defaultdict' object has no attribute 'columns'
+Traceback (most recent call last):
+  File "C:\Users\penta\OneDrive\Desktop\Python Excel\excel_compare.py", line 509, in main
+    report_path = comparator.generate_report()
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\penta\OneDrive\Desktop\Python Excel\excel_compare.py", line 367, in generate_report
+    self._format_sheet(writer, sheet_name, header_format)
+  File "C:\Users\penta\OneDrive\Desktop\Python Excel\excel_compare.py", line 469, in _format_sheet
+    for col_num in range(len(worksheet.table.columns)):
+                             ^^^^^^^^^^^^^^^^^^^^^^^
+AttributeError: 'collections.defaultdict' object has no attribute 'columns'
+2025-10-01 23:43:28,085 - INFO - Starting comparison: SampleData.xlsx vs SampleData1.xlsx
+2025-10-01 23:43:28,086 - INFO - 
+============================================================
+2025-10-01 23:43:28,086 - INFO - Processing sheet: Sample Orders
+2025-10-01 23:43:28,087 - INFO - ============================================================
+2025-10-01 23:43:28,491 - INFO - Read sheet 'Sample Orders' from SampleData.xlsx: 44 rows
+2025-10-01 23:43:28,524 - INFO - Read sheet 'Sample Orders' from SampleData1.xlsx: 43 rows
+2025-10-01 23:43:28,524 - INFO - Sheet 'Sample Orders': Auto-detected key column: orderdate
+2025-10-01 23:43:28,529 - INFO - Finding duplicates...
+2025-10-01 23:43:28,529 - INFO - Finding new records...
+2025-10-01 23:43:28,538 - INFO - Finding deleted records...
+2025-10-01 23:43:28,538 - INFO - Finding modified records...
+2025-10-01 23:43:28,589 - INFO - 
+Sheet 'Sample Orders' Summary:
+2025-10-01 23:43:28,589 - INFO -   Key Column: orderdate
+2025-10-01 23:43:28,589 - INFO -   New Records: 0
+2025-10-01 23:43:28,603 - INFO -   Deleted Records: 1
+2025-10-01 23:43:28,603 - INFO -   Modified Records: 3
+2025-10-01 23:43:28,603 - INFO -   Duplicates in File1: 0
+2025-10-01 23:43:28,603 - INFO -   Duplicates in File2: 0
+2025-10-01 23:43:28,605 - INFO - 
+Generating report: comparison_report_20251001_234328.xlsx
+2025-10-01 23:43:28,779 - INFO - Report generated successfully: comparison_report_20251001_234328.xlsx
+2025-10-01 23:47:11,087 - INFO - Starting comparison: SampleData.xlsx vs SampleData1.xlsx
+2025-10-01 23:47:11,087 - INFO - 
+============================================================
+2025-10-01 23:47:11,087 - INFO - Processing sheet: Sample Orders
+2025-10-01 23:47:11,087 - INFO - ============================================================
+2025-10-01 23:47:11,382 - INFO - Read sheet 'Sample Orders' from SampleData.xlsx: 44 rows
+2025-10-01 23:47:11,398 - INFO - Read sheet 'Sample Orders' from SampleData1.xlsx: 43 rows
+2025-10-01 23:47:11,398 - INFO - Sheet 'Sample Orders': Auto-detected key column: orderdate
+2025-10-01 23:47:11,417 - INFO - Finding duplicates...
+2025-10-01 23:47:11,421 - INFO - Finding new records...
+2025-10-01 23:47:11,421 - INFO - Finding deleted records...
+2025-10-01 23:47:11,427 - INFO - Finding modified records...
+2025-10-01 23:47:11,453 - INFO - 
+Sheet 'Sample Orders' Summary:
+2025-10-01 23:47:11,453 - INFO -   Key Column: orderdate
+2025-10-01 23:47:11,453 - INFO -   Row Count: 44 vs 43
+2025-10-01 23:47:11,453 - INFO -   Column Count: 7 vs 7
+2025-10-01 23:47:11,453 - INFO -   New Records: 0
+2025-10-01 23:47:11,453 - INFO -   Deleted Records: 1
+2025-10-01 23:47:11,453 - INFO -   Modified Records: 3
+2025-10-01 23:47:11,453 - INFO -   Duplicates in File1: 0
+2025-10-01 23:47:11,453 - INFO -   Duplicates in File2: 0
+2025-10-01 23:47:11,453 - INFO - 
+Generating report: comparison_report_20251001_234711.xlsx
+2025-10-01 23:47:11,606 - INFO - Report generated successfully: comparison_report_20251001_234711.xlsx
+2025-10-01 23:56:42,501 - INFO - Starting comparison: SampleData1.xlsx vs SampleData.xlsx
+2025-10-01 23:56:42,501 - INFO - 
+============================================================
+2025-10-01 23:56:42,501 - INFO - Processing sheet: Sample Orders
+2025-10-01 23:56:42,501 - INFO - ============================================================
+2025-10-01 23:56:42,846 - INFO - Read sheet 'Sample Orders' from SampleData1.xlsx: 43 rows
+2025-10-01 23:56:42,892 - INFO - Read sheet 'Sample Orders' from SampleData.xlsx: 44 rows
+2025-10-01 23:56:42,892 - INFO - Sheet 'Sample Orders': Auto-detected key column: orderdate
+2025-10-01 23:56:42,892 - INFO - Finding duplicates...
+2025-10-01 23:56:42,899 - INFO - Finding new records...
+2025-10-01 23:56:42,899 - INFO - Finding deleted records...
+2025-10-01 23:56:42,899 - INFO - Finding modified records...
+2025-10-01 23:56:42,950 - INFO - 
+Sheet 'Sample Orders' Summary:
+2025-10-01 23:56:42,950 - INFO -   Key Column: orderdate
+2025-10-01 23:56:42,950 - INFO -   Row Count: 43 vs 44
+2025-10-01 23:56:42,950 - INFO -   Column Count: 7 vs 7
+2025-10-01 23:56:42,950 - INFO -   New Records: 1
+2025-10-01 23:56:42,950 - INFO -   Deleted Records: 0
+2025-10-01 23:56:42,950 - INFO -   Modified Records: 3
+2025-10-01 23:56:42,950 - INFO -   Duplicates in File1: 0
+2025-10-01 23:56:42,950 - INFO -   Duplicates in File2: 0
+2025-10-01 23:56:42,950 - INFO - 
+Generating report: comparison_report_20251001_235642.xlsx
+2025-10-01 23:56:43,132 - INFO - Report generated successfully: comparison_report_20251001_235642.xlsx
