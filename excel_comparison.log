@@ -162,3 +162,28 @@ Sheet 'Sample Orders' Summary:
 2025-10-02 14:05:32,994 - INFO - 
 Generating report: comparison_report_20251002_140532.xlsx
 2025-10-02 14:05:33,115 - INFO - Report generated successfully: comparison_report_20251002_140532.xlsx
+2025-10-02 15:02:52,968 - INFO - Starting comparison: SampleData1.xlsx vs SampleData.xlsx
+2025-10-02 15:02:52,968 - INFO - 
+============================================================
+2025-10-02 15:02:52,968 - INFO - Processing sheet: Sample Orders
+2025-10-02 15:02:52,968 - INFO - ============================================================
+2025-10-02 15:02:53,277 - INFO - Read sheet 'Sample Orders' from SampleData1.xlsx: 43 rows, 7 columns
+2025-10-02 15:02:53,307 - INFO - Read sheet 'Sample Orders' from SampleData.xlsx: 44 rows, 7 columns
+2025-10-02 15:02:53,307 - INFO - Sheet 'Sample Orders': Auto-detected key column: orderdate
+2025-10-02 15:02:53,307 - INFO - Finding duplicates...
+2025-10-02 15:02:53,316 - INFO - Finding new records...
+2025-10-02 15:02:53,321 - INFO - Finding deleted records...
+2025-10-02 15:02:53,321 - INFO - Finding modified records...
+2025-10-02 15:02:53,361 - INFO - 
+Sheet 'Sample Orders' Summary:
+2025-10-02 15:02:53,361 - INFO -   Key Column: orderdate
+2025-10-02 15:02:53,361 - INFO -   Row Count: 43 vs 44
+2025-10-02 15:02:53,364 - INFO -   Column Count: 7 vs 7
+2025-10-02 15:02:53,364 - INFO -   New Records: 1
+2025-10-02 15:02:53,364 - INFO -   Deleted Records: 0
+2025-10-02 15:02:53,364 - INFO -   Modified Records: 3
+2025-10-02 15:02:53,364 - INFO -   Duplicates in File1: 0
+2025-10-02 15:02:53,364 - INFO -   Duplicates in File2: 0
+2025-10-02 15:02:53,366 - INFO - 
+Generating report: comparison_report_20251002_150253.xlsx
+2025-10-02 15:02:53,518 - INFO - Report generated successfully: comparison_report_20251002_150253.xlsx

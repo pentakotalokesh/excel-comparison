@@ -106,9 +106,9 @@ class ExcelComparator:
     
     def _detect_key_column(self, df: pd.DataFrame, sheet_name: str) -> str:
         """
-        Automatically detect the best key column
+        Automatically detect the best key column or composite key
         
-        Returns the first column with unique values, or first column as fallback
+        Returns the first column with unique values, composite key, or None for full-row comparison
         """
         if df.empty:
             return df.columns[0] if len(df.columns) > 0 else 'index'
@@ -121,56 +121,123 @@ class ExcelComparator:
                     logger.info(f"Sheet '{sheet_name}': Auto-detected key column: {col}")
                     return col
         
-        # Fallback to first column
-        first_col = df.columns[0]
-        logger.warning(f"Sheet '{sheet_name}': No unique column found, using first column: {first_col}")
-        return first_col
+        # Try to find a composite key (first 2-3 columns)
+        for num_cols in [2, 3]:
+            if len(df.columns) >= num_cols:
+                test_cols = df.columns[:num_cols].tolist()
+                # Create composite key
+                composite = df[test_cols].astype(str).agg('_'.join, axis=1)
+                unique_ratio = composite.nunique() / len(df)
+                if unique_ratio > 0.95:
+                    logger.info(f"Sheet '{sheet_name}': Using composite key: {test_cols}")
+                    return test_cols  # Return list for composite key
+        
+        # No unique key found - will use full row comparison
+        logger.warning(f"Sheet '{sheet_name}': No unique key found, using full-row comparison")
+        return None
     
-    def _find_duplicates(self, df: pd.DataFrame, key_col: str) -> pd.DataFrame:
+    def _create_row_hash(self, df: pd.DataFrame, key_col) -> pd.DataFrame:
+        """Create a hash for each row to enable full-row comparison"""
+        if isinstance(key_col, list):
+            # Composite key
+            df['_composite_key'] = df[key_col].astype(str).agg('_'.join, axis=1)
+            return df
+        elif key_col is None:
+            # Full row hash for comparison
+            df['_row_hash'] = df.astype(str).agg('_'.join, axis=1)
+            return df
+        else:
+            # Single key column - no modification needed
+            return df
+    
+    def _get_comparison_key(self, key_col):
+        """Get the actual column name to use for comparison"""
+        if isinstance(key_col, list):
+            return '_composite_key'
+        elif key_col is None:
+            return '_row_hash'
+        else:
+            return key_col
+    
+    def _find_duplicates(self, df: pd.DataFrame, key_col) -> pd.DataFrame:
         """Find duplicate records based on key column"""
         if df.empty:
             return pd.DataFrame()
         
-        duplicates = df[df.duplicated(subset=[key_col], keep=False)]
-        return duplicates.sort_values(by=key_col)
+        df = self._create_row_hash(df.copy(), key_col)
+        comp_key = self._get_comparison_key(key_col)
+        
+        duplicates = df[df.duplicated(subset=[comp_key], keep=False)]
+        
+        # Remove helper columns before returning
+        if comp_key in ['_composite_key', '_row_hash']:
+            duplicates = duplicates.drop(columns=[comp_key])
+        
+        return duplicates.sort_values(by=duplicates.columns[0]) if not duplicates.empty else duplicates
     
-    def _find_new_records(self, df1: pd.DataFrame, df2: pd.DataFrame, key_col: str) -> pd.DataFrame:
+    def _find_new_records(self, df1: pd.DataFrame, df2: pd.DataFrame, key_col) -> pd.DataFrame:
         """Find records in df2 that don't exist in df1"""
         if df2.empty:
             return pd.DataFrame()
         if df1.empty:
             return df2
         
-        new_keys = set(df2[key_col]) - set(df1[key_col])
-        return df2[df2[key_col].isin(new_keys)]
+        df1_copy = self._create_row_hash(df1.copy(), key_col)
+        df2_copy = self._create_row_hash(df2.copy(), key_col)
+        comp_key = self._get_comparison_key(key_col)
+        
+        new_keys = set(df2_copy[comp_key]) - set(df1_copy[comp_key])
+        result = df2_copy[df2_copy[comp_key].isin(new_keys)]
+        
+        # Remove helper columns before returning
+        if comp_key in ['_composite_key', '_row_hash']:
+            result = result.drop(columns=[comp_key])
+        
+        return result
     
-    def _find_deleted_records(self, df1: pd.DataFrame, df2: pd.DataFrame, key_col: str) -> pd.DataFrame:
+    def _find_deleted_records(self, df1: pd.DataFrame, df2: pd.DataFrame, key_col) -> pd.DataFrame:
         """Find records in df1 that don't exist in df2"""
         if df1.empty:
             return pd.DataFrame()
         if df2.empty:
             return df1
         
-        deleted_keys = set(df1[key_col]) - set(df2[key_col])
-        return df1[df1[key_col].isin(deleted_keys)]
+        df1_copy = self._create_row_hash(df1.copy(), key_col)
+        df2_copy = self._create_row_hash(df2.copy(), key_col)
+        comp_key = self._get_comparison_key(key_col)
+        
+        deleted_keys = set(df1_copy[comp_key]) - set(df2_copy[comp_key])
+        result = df1_copy[df1_copy[comp_key].isin(deleted_keys)]
+        
+        # Remove helper columns before returning
+        if comp_key in ['_composite_key', '_row_hash']:
+            result = result.drop(columns=[comp_key])
+        
+        return result
     
     def _find_modified_records(self, df1: pd.DataFrame, df2: pd.DataFrame, 
-                              key_col: str) -> Tuple[pd.DataFrame, Dict[str, int]]:
+                              key_col) -> Tuple[pd.DataFrame, Dict[str, int]]:
         """Find modified records and track changes per column"""
         if df1.empty or df2.empty:
             return pd.DataFrame(), {}
         
+        # Handle different key types
+        df1_copy = self._create_row_hash(df1.copy(), key_col)
+        df2_copy = self._create_row_hash(df2.copy(), key_col)
+        comp_key = self._get_comparison_key(key_col)
+        
         # Get common keys
-        common_keys = set(df1[key_col]).intersection(set(df2[key_col]))
+        common_keys = set(df1_copy[comp_key]).intersection(set(df2_copy[comp_key]))
         if not common_keys:
             return pd.DataFrame(), {}
         
         # Filter to common records
-        df1_common = df1[df1[key_col].isin(common_keys)].set_index(key_col).sort_index()
-        df2_common = df2[df2[key_col].isin(common_keys)].set_index(key_col).sort_index()
+        df1_common = df1_copy[df1_copy[comp_key].isin(common_keys)].set_index(comp_key).sort_index()
+        df2_common = df2_copy[df2_copy[comp_key].isin(common_keys)].set_index(comp_key).sort_index()
         
-        # Get common columns
-        common_cols = df1_common.columns.intersection(df2_common.columns).tolist()
+        # Get common columns (exclude helper columns)
+        all_cols = df1_common.columns.intersection(df2_common.columns).tolist()
+        common_cols = [col for col in all_cols if col not in ['_composite_key', '_row_hash']]
         
         # Track changes per column
         column_changes = {}
@@ -202,7 +269,21 @@ class ExcelComparator:
                         column_changes[col] = column_changes.get(col, 0) + 1
                     
                     # Create change record
-                    change_record = {key_col: key}
+                    change_record = {}
+                    
+                    # Add key information
+                    if isinstance(key_col, list):
+                        # Composite key - add each component
+                        for i, col in enumerate(key_col):
+                            change_record[col] = row1.name.split('_')[i] if '_' in str(row1.name) else row1.name
+                    elif key_col is not None:
+                        change_record[key_col] = key
+                    else:
+                        # Full row comparison - add first few columns as identifier
+                        for col in common_cols[:3]:
+                            change_record[col] = row1[col]
+                    
+                    # Add changed columns
                     for col in changed_cols:
                         change_record[f'{col}_old'] = row1[col]
                         change_record[f'{col}_new'] = row2[col]
@@ -343,7 +424,7 @@ class ExcelComparator:
                 
                 # Log summary
                 logger.info(f"\nSheet '{sheet_name}' Summary:")
-                logger.info(f"  Key Column: {key_col}")
+                logger.info(f"  Key Column: {key_col if not isinstance(key_col, list) else 'Composite: ' + str(key_col)}")
                 logger.info(f"  Row Count: {row_count_f1} vs {row_count_f2}")
                 logger.info(f"  Column Count: {col_count_f1} vs {col_count_f2}")
                 logger.info(f"  New Records: {len(new_records)}")
