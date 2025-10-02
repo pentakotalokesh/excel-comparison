@@ -1,5 +1,5 @@
 """
-Excel File Comparison Tool - Production Ready
+Excel File Comparison Tool - Production Ready (FIXED)
 Compares multiple sheets from two Excel files with automatic key detection
 and generates comprehensive validation reports.
 
@@ -170,7 +170,7 @@ class ExcelComparator:
         df2_common = df2[df2[key_col].isin(common_keys)].set_index(key_col).sort_index()
         
         # Get common columns
-        common_cols = df1_common.columns.intersection(df2_common.columns)
+        common_cols = df1_common.columns.intersection(df2_common.columns).tolist()
         
         # Track changes per column
         column_changes = {}
@@ -180,26 +180,38 @@ class ExcelComparator:
             if key not in df1_common.index or key not in df2_common.index:
                 continue
             
-            row1 = df1_common.loc[key, common_cols]
-            row2 = df2_common.loc[key, common_cols]
-            
-            # Compare values
-            differences = row1 != row2
-            
-            if differences.any():
-                changed_cols = common_cols[differences].tolist()
+            try:
+                row1 = df1_common.loc[key, common_cols]
+                row2 = df2_common.loc[key, common_cols]
                 
-                # Track column-level changes
-                for col in changed_cols:
-                    column_changes[col] = column_changes.get(col, 0) + 1
+                # Convert to Series if not already (handles single-row case)
+                if not isinstance(row1, pd.Series):
+                    row1 = pd.Series(row1, index=common_cols)
+                if not isinstance(row2, pd.Series):
+                    row2 = pd.Series(row2, index=common_cols)
                 
-                # Create change record
-                change_record = {key_col: key}
-                for col in changed_cols:
-                    change_record[f'{col}_old'] = row1[col]
-                    change_record[f'{col}_new'] = row2[col]
+                # Compare values element by element
+                differences = (row1 != row2).fillna(False)
                 
-                modified_rows.append(change_record)
+                # Check if any differences exist
+                if differences.any():
+                    changed_cols = [col for col, is_diff in differences.items() if is_diff]
+                    
+                    # Track column-level changes
+                    for col in changed_cols:
+                        column_changes[col] = column_changes.get(col, 0) + 1
+                    
+                    # Create change record
+                    change_record = {key_col: key}
+                    for col in changed_cols:
+                        change_record[f'{col}_old'] = row1[col]
+                        change_record[f'{col}_new'] = row2[col]
+                    
+                    modified_rows.append(change_record)
+                    
+            except Exception as e:
+                logger.warning(f"Error comparing key '{key}': {e}")
+                continue
         
         modified_df = pd.DataFrame(modified_rows) if modified_rows else pd.DataFrame()
         return modified_df, column_changes
@@ -209,12 +221,19 @@ class ExcelComparator:
         try:
             header_row = self.header_rows.get(sheet_name, 0)
             df = pd.read_excel(file_path, sheet_name=sheet_name, header=header_row)
+            
+            # Remove unnamed columns (columns with 'Unnamed' in the name)
+            df = df.loc[:, ~df.columns.str.contains('^Unnamed', case=False, na=False)]
+            
             df = self._normalize_column_names(df)
             
             # Remove completely empty rows
             df = df.dropna(how='all')
             
-            logger.info(f"Read sheet '{sheet_name}' from {file_path.name}: {len(df)} rows")
+            # Remove completely empty columns
+            df = df.dropna(axis=1, how='all')
+            
+            logger.info(f"Read sheet '{sheet_name}' from {file_path.name}: {len(df)} rows, {len(df.columns)} columns")
             return df
         except Exception as e:
             logger.error(f"Error reading sheet '{sheet_name}' from {file_path.name}: {e}")
@@ -460,7 +479,8 @@ class ExcelComparator:
                                   yes_format, no_format, match_format, 
                                   mismatch_format, comment_format):
         """Create validation summary sheet like the provided image"""
-        worksheet = workbook = writer.book.add_worksheet('Validation Summary')
+        workbook = writer.book
+        worksheet = workbook.add_worksheet('Validation Summary')
         
         # Set column widths
         worksheet.set_column('A:A', 25)
@@ -619,8 +639,6 @@ def main():
     # Optional: Specify header rows for specific sheets
     HEADER_ROWS = {
         'Sample Orders': 0
-        # 'Sheet1': 0,  # First row is header (default)
-        # 'Sheet2': 1,  # Second row is header
     }
     
     # Optional: Custom labels for the report
@@ -636,7 +654,7 @@ def main():
             header_rows=HEADER_ROWS,
             file1_label=FILE1_LABEL,
             file2_label=FILE2_LABEL,
-            chunk_size=10000  # Adjust for memory constraints
+            chunk_size=10000
         )
         
         # Run comparison
