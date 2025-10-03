@@ -1,7 +1,7 @@
 """
-Excel File Comparison Tool - Production Ready (FIXED)
+Excel File Comparison Tool - Summary Only Version
 Compares multiple sheets from two Excel files with automatic key detection
-and generates comprehensive validation reports.
+and generates validation summary report with counts only.
 
 Requirements:
 pip install pandas openpyxl xlsxwriter numpy
@@ -39,11 +39,11 @@ class ComparisonResult:
     row_count_file2: int = 0
     col_count_file1: int = 0
     col_count_file2: int = 0
-    new_records: pd.DataFrame = field(default_factory=pd.DataFrame)
-    deleted_records: pd.DataFrame = field(default_factory=pd.DataFrame)
-    modified_records: pd.DataFrame = field(default_factory=pd.DataFrame)
-    duplicates_file1: pd.DataFrame = field(default_factory=pd.DataFrame)
-    duplicates_file2: pd.DataFrame = field(default_factory=pd.DataFrame)
+    new_records_count: int = 0
+    deleted_records_count: int = 0
+    modified_records_count: int = 0
+    duplicates_file1_count: int = 0
+    duplicates_file2_count: int = 0
     column_changes: Dict[str, int] = field(default_factory=dict)
 
 
@@ -55,7 +55,8 @@ class ExcelComparator:
                  header_rows: Optional[Dict[str, int]] = None,
                  file1_label: str = "Report Version - 3",
                  file2_label: str = "Report Version - 4",
-                 chunk_size: int = 10000):
+                 chunk_size: int = 10000,
+                 key_columns: Optional[Dict[str, List[str]]] = None):
         """
         Initialize the comparator
         
@@ -67,11 +68,13 @@ class ExcelComparator:
             file1_label: Label for first file in report
             file2_label: Label for second file in report
             chunk_size: Number of rows to process at once for large files
+            key_columns: Dict mapping sheet names to list of column names to use as composite key
         """
         self.file1_path = Path(file1_path)
         self.file2_path = Path(file2_path)
         self.sheets = sheets
         self.header_rows = header_rows or {}
+        self.key_columns = key_columns or {}
         self.file1_label = file1_label
         self.file2_label = file2_label
         self.chunk_size = chunk_size
@@ -90,64 +93,65 @@ class ExcelComparator:
     
     def _harmonize_datatypes(self, df1: pd.DataFrame, df2: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFrame]:
         """Align data types between two dataframes"""
+        df1 = df1.copy()
+        df2 = df2.copy()
+        
         common_cols = df1.columns.intersection(df2.columns)
         
         for col in common_cols:
-            # Convert to string for comparison if types differ
             if df1[col].dtype != df2[col].dtype:
                 df1[col] = df1[col].astype(str)
                 df2[col] = df2[col].astype(str)
             
-            # Handle NaN values consistently
             df1[col] = df1[col].fillna('')
             df2[col] = df2[col].fillna('')
+            
+            if df1[col].dtype == 'object':
+                df1[col] = df1[col].astype(str).str.strip()
+                df2[col] = df2[col].astype(str).str.strip()
         
         return df1, df2
     
-    def _detect_key_column(self, df: pd.DataFrame, sheet_name: str) -> str:
-        """
-        Automatically detect the best key column or composite key
-        
-        Returns the first column with unique values, composite key, or None for full-row comparison
-        """
+    def _detect_key_column(self, df: pd.DataFrame, sheet_name: str):
+        """Automatically detect the best key column or composite key"""
         if df.empty:
             return df.columns[0] if len(df.columns) > 0 else 'index'
         
-        # Try to find a column with unique values
+        if sheet_name in self.key_columns:
+            specified_keys = self.key_columns[sheet_name]
+            logger.info(f"Sheet '{sheet_name}': Using user-specified key columns: {specified_keys}")
+            return specified_keys
+        
         for col in df.columns:
-            if df[col].notna().sum() > 0:  # Has non-null values
+            if df[col].notna().sum() > 0:
                 unique_ratio = df[col].nunique() / len(df)
-                if unique_ratio > 0.95:  # 95% or more unique values
+                if unique_ratio > 0.95:
                     logger.info(f"Sheet '{sheet_name}': Auto-detected key column: {col}")
                     return col
         
-        # Try to find a composite key (first 2-3 columns)
         for num_cols in [2, 3]:
             if len(df.columns) >= num_cols:
                 test_cols = df.columns[:num_cols].tolist()
-                # Create composite key
                 composite = df[test_cols].astype(str).agg('_'.join, axis=1)
                 unique_ratio = composite.nunique() / len(df)
                 if unique_ratio > 0.95:
                     logger.info(f"Sheet '{sheet_name}': Using composite key: {test_cols}")
-                    return test_cols  # Return list for composite key
+                    return test_cols
         
-        # No unique key found - will use full row comparison
         logger.warning(f"Sheet '{sheet_name}': No unique key found, using full-row comparison")
         return None
     
     def _create_row_hash(self, df: pd.DataFrame, key_col) -> pd.DataFrame:
         """Create a hash for each row to enable full-row comparison"""
+        df = df.copy()
+        
         if isinstance(key_col, list):
-            # Composite key
-            df['_composite_key'] = df[key_col].astype(str).agg('_'.join, axis=1)
+            df['_composite_key'] = df[key_col].fillna('').astype(str).agg('||'.join, axis=1)
             return df
         elif key_col is None:
-            # Full row hash for comparison
-            df['_row_hash'] = df.astype(str).agg('_'.join, axis=1)
+            df['_row_hash'] = df.fillna('').astype(str).agg('||'.join, axis=1)
             return df
         else:
-            # Single key column - no modification needed
             return df
     
     def _get_comparison_key(self, key_col):
@@ -159,89 +163,64 @@ class ExcelComparator:
         else:
             return key_col
     
-    def _find_duplicates(self, df: pd.DataFrame, key_col) -> pd.DataFrame:
-        """Find duplicate records based on key column"""
+    def _count_duplicates(self, df: pd.DataFrame, key_col) -> int:
+        """Count duplicate records based on key column"""
         if df.empty:
-            return pd.DataFrame()
+            return 0
         
         df = self._create_row_hash(df.copy(), key_col)
         comp_key = self._get_comparison_key(key_col)
         
-        duplicates = df[df.duplicated(subset=[comp_key], keep=False)]
-        
-        # Remove helper columns before returning
-        if comp_key in ['_composite_key', '_row_hash']:
-            duplicates = duplicates.drop(columns=[comp_key])
-        
-        return duplicates.sort_values(by=duplicates.columns[0]) if not duplicates.empty else duplicates
+        return df.duplicated(subset=[comp_key], keep=False).sum()
     
-    def _find_new_records(self, df1: pd.DataFrame, df2: pd.DataFrame, key_col) -> pd.DataFrame:
-        """Find records in df2 that don't exist in df1"""
+    def _count_new_records(self, df1: pd.DataFrame, df2: pd.DataFrame, key_col) -> int:
+        """Count records in df2 that don't exist in df1"""
         if df2.empty:
-            return pd.DataFrame()
+            return 0
         if df1.empty:
-            return df2
+            return len(df2)
         
         df1_copy = self._create_row_hash(df1.copy(), key_col)
         df2_copy = self._create_row_hash(df2.copy(), key_col)
         comp_key = self._get_comparison_key(key_col)
         
         new_keys = set(df2_copy[comp_key]) - set(df1_copy[comp_key])
-        result = df2_copy[df2_copy[comp_key].isin(new_keys)]
-        
-        # Remove helper columns before returning
-        if comp_key in ['_composite_key', '_row_hash']:
-            result = result.drop(columns=[comp_key])
-        
-        return result
+        return len(new_keys)
     
-    def _find_deleted_records(self, df1: pd.DataFrame, df2: pd.DataFrame, key_col) -> pd.DataFrame:
-        """Find records in df1 that don't exist in df2"""
+    def _count_deleted_records(self, df1: pd.DataFrame, df2: pd.DataFrame, key_col) -> int:
+        """Count records in df1 that don't exist in df2"""
         if df1.empty:
-            return pd.DataFrame()
+            return 0
         if df2.empty:
-            return df1
+            return len(df1)
         
         df1_copy = self._create_row_hash(df1.copy(), key_col)
         df2_copy = self._create_row_hash(df2.copy(), key_col)
         comp_key = self._get_comparison_key(key_col)
         
         deleted_keys = set(df1_copy[comp_key]) - set(df2_copy[comp_key])
-        result = df1_copy[df1_copy[comp_key].isin(deleted_keys)]
-        
-        # Remove helper columns before returning
-        if comp_key in ['_composite_key', '_row_hash']:
-            result = result.drop(columns=[comp_key])
-        
-        return result
+        return len(deleted_keys)
     
-    def _find_modified_records(self, df1: pd.DataFrame, df2: pd.DataFrame, 
-                              key_col) -> Tuple[pd.DataFrame, Dict[str, int]]:
-        """Find modified records and track changes per column"""
+    def _count_modified_records(self, df1: pd.DataFrame, df2: pd.DataFrame, key_col) -> int:
+        """Count modified records"""
         if df1.empty or df2.empty:
-            return pd.DataFrame(), {}
+            return 0
         
-        # Handle different key types
         df1_copy = self._create_row_hash(df1.copy(), key_col)
         df2_copy = self._create_row_hash(df2.copy(), key_col)
         comp_key = self._get_comparison_key(key_col)
         
-        # Get common keys
         common_keys = set(df1_copy[comp_key]).intersection(set(df2_copy[comp_key]))
         if not common_keys:
-            return pd.DataFrame(), {}
+            return 0
         
-        # Filter to common records
         df1_common = df1_copy[df1_copy[comp_key].isin(common_keys)].set_index(comp_key).sort_index()
         df2_common = df2_copy[df2_copy[comp_key].isin(common_keys)].set_index(comp_key).sort_index()
         
-        # Get common columns (exclude helper columns)
         all_cols = df1_common.columns.intersection(df2_common.columns).tolist()
         common_cols = [col for col in all_cols if col not in ['_composite_key', '_row_hash']]
         
-        # Track changes per column
-        column_changes = {}
-        modified_rows = []
+        modified_count = 0
         
         for key in common_keys:
             if key not in df1_common.index or key not in df2_common.index:
@@ -251,51 +230,21 @@ class ExcelComparator:
                 row1 = df1_common.loc[key, common_cols]
                 row2 = df2_common.loc[key, common_cols]
                 
-                # Convert to Series if not already (handles single-row case)
                 if not isinstance(row1, pd.Series):
                     row1 = pd.Series(row1, index=common_cols)
                 if not isinstance(row2, pd.Series):
                     row2 = pd.Series(row2, index=common_cols)
                 
-                # Compare values element by element
                 differences = (row1 != row2).fillna(False)
                 
-                # Check if any differences exist
                 if differences.any():
-                    changed_cols = [col for col, is_diff in differences.items() if is_diff]
-                    
-                    # Track column-level changes
-                    for col in changed_cols:
-                        column_changes[col] = column_changes.get(col, 0) + 1
-                    
-                    # Create change record
-                    change_record = {}
-                    
-                    # Add key information
-                    if isinstance(key_col, list):
-                        # Composite key - add each component
-                        for i, col in enumerate(key_col):
-                            change_record[col] = row1.name.split('_')[i] if '_' in str(row1.name) else row1.name
-                    elif key_col is not None:
-                        change_record[key_col] = key
-                    else:
-                        # Full row comparison - add first few columns as identifier
-                        for col in common_cols[:3]:
-                            change_record[col] = row1[col]
-                    
-                    # Add changed columns
-                    for col in changed_cols:
-                        change_record[f'{col}_old'] = row1[col]
-                        change_record[f'{col}_new'] = row2[col]
-                    
-                    modified_rows.append(change_record)
+                    modified_count += 1
                     
             except Exception as e:
                 logger.warning(f"Error comparing key '{key}': {e}")
                 continue
         
-        modified_df = pd.DataFrame(modified_rows) if modified_rows else pd.DataFrame()
-        return modified_df, column_changes
+        return modified_count
     
     def _read_sheet(self, file_path: Path, sheet_name: str) -> pd.DataFrame:
         """Read a sheet from Excel file with error handling"""
@@ -303,15 +252,9 @@ class ExcelComparator:
             header_row = self.header_rows.get(sheet_name, 0)
             df = pd.read_excel(file_path, sheet_name=sheet_name, header=header_row)
             
-            # Remove unnamed columns (columns with 'Unnamed' in the name)
             df = df.loc[:, ~df.columns.str.contains('^Unnamed', case=False, na=False)]
-            
             df = self._normalize_column_names(df)
-            
-            # Remove completely empty rows
             df = df.dropna(how='all')
-            
-            # Remove completely empty columns
             df = df.dropna(axis=1, how='all')
             
             logger.info(f"Read sheet '{sheet_name}' from {file_path.name}: {len(df)} rows, {len(df.columns)} columns")
@@ -324,7 +267,6 @@ class ExcelComparator:
         """Compare all specified sheets between the two files"""
         logger.info(f"Starting comparison: {self.file1_path.name} vs {self.file2_path.name}")
         
-        # Get sheet names
         if self.sheets is None:
             xl_file = pd.ExcelFile(self.file1_path)
             self.sheets = xl_file.sheet_names
@@ -336,102 +278,82 @@ class ExcelComparator:
             logger.info(f"{'='*60}")
             
             try:
-                # Read sheets
                 df1 = self._read_sheet(self.file1_path, sheet_name)
                 df2 = self._read_sheet(self.file2_path, sheet_name)
                 
-                # Store original counts
                 row_count_f1 = len(df1)
                 row_count_f2 = len(df2)
                 col_count_f1 = len(df1.columns) if not df1.empty else 0
                 col_count_f2 = len(df2.columns) if not df2.empty else 0
                 
-                # Skip if both sheets are empty
                 if df1.empty and df2.empty:
                     logger.warning(f"Sheet '{sheet_name}' is empty in both files. Skipping.")
                     continue
                 
-                # Handle case where one sheet is empty
                 if df1.empty or df2.empty:
                     if df1.empty:
                         key_col = self._detect_key_column(df2, sheet_name)
                         result = ComparisonResult(
                             sheet_name=sheet_name,
-                            key_column=key_col,
+                            key_column=str(key_col) if isinstance(key_col, list) else (key_col if key_col else "Full Row Hash"),
                             row_count_file1=row_count_f1,
                             row_count_file2=row_count_f2,
                             col_count_file1=col_count_f1,
                             col_count_file2=col_count_f2,
-                            new_records=df2,
-                            deleted_records=pd.DataFrame(),
-                            duplicates_file2=self._find_duplicates(df2, key_col)
+                            new_records_count=len(df2),
+                            duplicates_file2_count=self._count_duplicates(df2, key_col)
                         )
                     else:
                         key_col = self._detect_key_column(df1, sheet_name)
                         result = ComparisonResult(
                             sheet_name=sheet_name,
-                            key_column=key_col,
+                            key_column=str(key_col) if isinstance(key_col, list) else (key_col if key_col else "Full Row Hash"),
                             row_count_file1=row_count_f1,
                             row_count_file2=row_count_f2,
                             col_count_file1=col_count_f1,
                             col_count_file2=col_count_f2,
-                            new_records=pd.DataFrame(),
-                            deleted_records=df1,
-                            duplicates_file1=self._find_duplicates(df1, key_col)
+                            deleted_records_count=len(df1),
+                            duplicates_file1_count=self._count_duplicates(df1, key_col)
                         )
                     self.results.append(result)
                     continue
                 
-                # Detect key column
                 key_col = self._detect_key_column(df1, sheet_name)
-                
-                # Harmonize data types
                 df1, df2 = self._harmonize_datatypes(df1, df2)
                 
-                # Find duplicates
-                logger.info("Finding duplicates...")
-                duplicates_file1 = self._find_duplicates(df1, key_col)
-                duplicates_file2 = self._find_duplicates(df2, key_col)
+                logger.info("Counting changes...")
+                duplicates_count_f1 = self._count_duplicates(df1, key_col)
+                duplicates_count_f2 = self._count_duplicates(df2, key_col)
+                new_records_count = self._count_new_records(df1, df2, key_col)
+                deleted_records_count = self._count_deleted_records(df1, df2, key_col)
+                modified_records_count = self._count_modified_records(df1, df2, key_col)
                 
-                # Find new records
-                logger.info("Finding new records...")
-                new_records = self._find_new_records(df1, df2, key_col)
+                key_col_display = str(key_col) if isinstance(key_col, list) else (key_col if key_col else "Full Row Hash")
                 
-                # Find deleted records
-                logger.info("Finding deleted records...")
-                deleted_records = self._find_deleted_records(df1, df2, key_col)
-                
-                # Find modified records
-                logger.info("Finding modified records...")
-                modified_records, column_changes = self._find_modified_records(df1, df2, key_col)
-                
-                # Store results
                 result = ComparisonResult(
                     sheet_name=sheet_name,
-                    key_column=key_col,
+                    key_column=key_col_display,
                     row_count_file1=row_count_f1,
                     row_count_file2=row_count_f2,
                     col_count_file1=col_count_f1,
                     col_count_file2=col_count_f2,
-                    new_records=new_records,
-                    deleted_records=deleted_records,
-                    modified_records=modified_records,
-                    duplicates_file1=duplicates_file1,
-                    duplicates_file2=duplicates_file2,
-                    column_changes=column_changes
+                    new_records_count=new_records_count,
+                    deleted_records_count=deleted_records_count,
+                    modified_records_count=modified_records_count,
+                    duplicates_file1_count=duplicates_count_f1,
+                    duplicates_file2_count=duplicates_count_f2
                 )
                 self.results.append(result)
                 
-                # Log summary
                 logger.info(f"\nSheet '{sheet_name}' Summary:")
-                logger.info(f"  Key Column: {key_col if not isinstance(key_col, list) else 'Composite: ' + str(key_col)}")
+                logger.info(f"  Key Column: {key_col_display}")
                 logger.info(f"  Row Count: {row_count_f1} vs {row_count_f2}")
                 logger.info(f"  Column Count: {col_count_f1} vs {col_count_f2}")
-                logger.info(f"  New Records: {len(new_records)}")
-                logger.info(f"  Deleted Records: {len(deleted_records)}")
-                logger.info(f"  Modified Records: {len(modified_records)}")
-                logger.info(f"  Duplicates in File1: {len(duplicates_file1)}")
-                logger.info(f"  Duplicates in File2: {len(duplicates_file2)}")
+                logger.info(f"  New Records: {new_records_count}")
+                logger.info(f"  Deleted Records: {deleted_records_count}")
+                logger.info(f"  Modified Records: {modified_records_count}")
+                logger.info(f"  Duplicates in File1: {duplicates_count_f1}")
+                logger.info(f"  Duplicates in File2: {duplicates_count_f2}")
                 
             except Exception as e:
                 logger.error(f"Error processing sheet '{sheet_name}': {e}", exc_info=True)
@@ -440,20 +362,11 @@ class ExcelComparator:
         return self.results
     
     def generate_report(self, output_path: str = None) -> str:
-        """
-        Generate comprehensive Excel report with validation summary
-        
-        Args:
-            output_path: Custom output path (optional)
-        
-        Returns:
-            Path to the generated report
-        """
+        """Generate comprehensive Excel report with validation summary"""
         if not self.results:
             logger.warning("No comparison results to report.")
             return None
         
-        # Generate default output path if not provided
         if output_path is None:
             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
             output_path = f'comparison_report_{timestamp}.xlsx'
@@ -463,7 +376,6 @@ class ExcelComparator:
         with pd.ExcelWriter(output_path, engine='xlsxwriter') as writer:
             workbook = writer.book
             
-            # Create formats
             header_format = workbook.add_format({
                 'bold': True,
                 'bg_color': '#4472C4',
@@ -514,44 +426,9 @@ class ExcelComparator:
                 'align': 'left'
             })
             
-            # Generate Validation Summary Sheet
             self._create_validation_summary(writer, header_format, title_format, 
                                           yes_format, no_format, match_format, 
                                           mismatch_format, comment_format)
-            
-            # Generate detail sheets for each result
-            for result in self.results:
-                sheet_prefix = result.sheet_name[:25]  # Limit sheet name length
-                
-                # New Records
-                if not result.new_records.empty:
-                    sheet_name = f'{sheet_prefix}_New'[:31]
-                    result.new_records.to_excel(writer, sheet_name=sheet_name, index=False)
-                    self._format_sheet(writer, sheet_name, header_format, result.new_records)
-                
-                # Deleted Records
-                if not result.deleted_records.empty:
-                    sheet_name = f'{sheet_prefix}_Deleted'[:31]
-                    result.deleted_records.to_excel(writer, sheet_name=sheet_name, index=False)
-                    self._format_sheet(writer, sheet_name, header_format, result.deleted_records)
-                
-                # Modified Records
-                if not result.modified_records.empty:
-                    sheet_name = f'{sheet_prefix}_Modified'[:31]
-                    result.modified_records.to_excel(writer, sheet_name=sheet_name, index=False)
-                    self._format_sheet(writer, sheet_name, header_format, result.modified_records)
-                
-                # Duplicates File1
-                if not result.duplicates_file1.empty:
-                    sheet_name = f'{sheet_prefix}_Dup_F1'[:31]
-                    result.duplicates_file1.to_excel(writer, sheet_name=sheet_name, index=False)
-                    self._format_sheet(writer, sheet_name, header_format, result.duplicates_file1)
-                
-                # Duplicates File2
-                if not result.duplicates_file2.empty:
-                    sheet_name = f'{sheet_prefix}_Dup_F2'[:31]
-                    result.duplicates_file2.to_excel(writer, sheet_name=sheet_name, index=False)
-                    self._format_sheet(writer, sheet_name, header_format, result.duplicates_file2)
         
         logger.info(f"Report generated successfully: {output_path}")
         return output_path
@@ -559,11 +436,10 @@ class ExcelComparator:
     def _create_validation_summary(self, writer, header_format, title_format,
                                   yes_format, no_format, match_format, 
                                   mismatch_format, comment_format):
-        """Create validation summary sheet like the provided image"""
+        """Create validation summary sheet with counts only"""
         workbook = writer.book
         worksheet = workbook.add_worksheet('Validation Summary')
         
-        # Set column widths
         worksheet.set_column('A:A', 25)
         worksheet.set_column('B:B', 20)
         worksheet.set_column('C:C', 20)
@@ -571,21 +447,18 @@ class ExcelComparator:
         
         current_row = 0
         
-        # Tab Validation Summary Section
         worksheet.write(current_row, 0, 'Tab Validation Summary', title_format)
         worksheet.write(current_row, 1, '', title_format)
         worksheet.write(current_row, 2, '', title_format)
         worksheet.write(current_row, 3, 'Comments', title_format)
         current_row += 1
         
-        # Headers
         worksheet.write(current_row, 0, 'Validations', header_format)
         worksheet.write(current_row, 1, self.file1_label, header_format)
         worksheet.write(current_row, 2, self.file2_label, header_format)
         worksheet.write(current_row, 3, '', header_format)
         current_row += 1
         
-        # Total Tabs Count
         total_sheets_f1 = len(self.results)
         total_sheets_f2 = len(self.results)
         
@@ -595,39 +468,33 @@ class ExcelComparator:
         worksheet.write(current_row, 3, 'Count Match' if total_sheets_f1 == total_sheets_f2 else 'Count Mismatch', comment_format)
         current_row += 1
         
-        # Tabs Added
         worksheet.write(current_row, 0, 'Tabs Added', match_format)
         worksheet.write(current_row, 1, 'No', no_format)
         worksheet.write(current_row, 2, 'No', no_format)
         worksheet.write(current_row, 3, 'No new tabs', comment_format)
         current_row += 1
         
-        # Tabs Removed
         worksheet.write(current_row, 0, 'Tabs Removed', match_format)
         worksheet.write(current_row, 1, 'No', no_format)
         worksheet.write(current_row, 2, 'No', no_format)
         worksheet.write(current_row, 3, 'No tabs removed', comment_format)
         current_row += 1
         
-        # Process each sheet
         for result in self.results:
             current_row += 1
             
-            # Tab Name Header
             worksheet.write(current_row, 0, f'Tab Name: {result.sheet_name}', title_format)
             worksheet.write(current_row, 1, '', title_format)
             worksheet.write(current_row, 2, '', title_format)
             worksheet.write(current_row, 3, 'Comments', title_format)
             current_row += 1
             
-            # Sub-headers
             worksheet.write(current_row, 0, 'Validations', header_format)
             worksheet.write(current_row, 1, self.file1_label, header_format)
             worksheet.write(current_row, 2, self.file2_label, header_format)
             worksheet.write(current_row, 3, '', header_format)
             current_row += 1
             
-            # Row Count
             row_match = result.row_count_file1 == result.row_count_file2
             worksheet.write(current_row, 0, 'Row Count', match_format)
             worksheet.write(current_row, 1, result.row_count_file1, 
@@ -639,7 +506,6 @@ class ExcelComparator:
                           comment_format)
             current_row += 1
             
-            # Column Count
             col_match = result.col_count_file1 == result.col_count_file2
             worksheet.write(current_row, 0, 'Column Count', match_format)
             worksheet.write(current_row, 1, result.col_count_file1, 
@@ -651,83 +517,61 @@ class ExcelComparator:
                           comment_format)
             current_row += 1
             
-            # New Records
-            has_new = len(result.new_records) > 0
+            has_new = result.new_records_count > 0
             worksheet.write(current_row, 0, 'New Records', match_format)
             worksheet.write(current_row, 1, 'No', no_format)
             worksheet.write(current_row, 2, 'Yes' if has_new else 'No', 
                           yes_format if has_new else no_format)
-            comment = f'{len(result.new_records)}-New Records available in New Records tab' if has_new else ''
+            comment = f'{result.new_records_count} New Records found' if has_new else ''
             worksheet.write(current_row, 3, comment, comment_format)
             current_row += 1
             
-            # Modified Records
-            has_modified = len(result.modified_records) > 0
+            has_modified = result.modified_records_count > 0
             worksheet.write(current_row, 0, 'Modified Records', match_format)
             worksheet.write(current_row, 1, 'No', no_format)
             worksheet.write(current_row, 2, 'Yes' if has_modified else 'No', 
                           yes_format if has_modified else no_format)
-            comment = f'{len(result.modified_records)}-Modified Records available in Modified Record tab' if has_modified else ''
+            comment = f'{result.modified_records_count} Modified Records found' if has_modified else ''
             worksheet.write(current_row, 3, comment, comment_format)
             current_row += 1
             
-            # Deleted Records
-            has_deleted = len(result.deleted_records) > 0
+            has_deleted = result.deleted_records_count > 0
             worksheet.write(current_row, 0, 'Deleted Records', match_format)
             worksheet.write(current_row, 1, 'No', no_format)
             worksheet.write(current_row, 2, 'Yes' if has_deleted else 'No', 
                           yes_format if has_deleted else no_format)
-            comment = f'{len(result.deleted_records)}-Deleted Record details available in Deleted Records Data tab' if has_deleted else ''
+            comment = f'{result.deleted_records_count} Deleted Records found' if has_deleted else ''
             worksheet.write(current_row, 3, comment, comment_format)
             current_row += 1
             
-            # Duplicate Records
-            has_dup = len(result.duplicates_file1) > 0 or len(result.duplicates_file2) > 0
+            has_dup = result.duplicates_file1_count > 0 or result.duplicates_file2_count > 0
             worksheet.write(current_row, 0, 'Duplicate Records', match_format)
             worksheet.write(current_row, 1, 'No', no_format)
             worksheet.write(current_row, 2, 'Yes' if has_dup else 'No', 
                           yes_format if has_dup else no_format)
-            worksheet.write(current_row, 3, '', comment_format)
+            comment = ''
+            if has_dup:
+                comment = f'File1: {result.duplicates_file1_count}, File2: {result.duplicates_file2_count} duplicates'
+            worksheet.write(current_row, 3, comment, comment_format)
             current_row += 1
-    
-    def _format_sheet(self, writer, sheet_name, header_format, df):
-        """Apply formatting to a worksheet"""
-        worksheet = writer.sheets[sheet_name]
-        
-        # Format header row
-        for col_num, col_name in enumerate(df.columns):
-            worksheet.write(0, col_num, col_name, header_format)
-        
-        # Auto-fit columns
-        for i, col in enumerate(df.columns):
-            try:
-                max_len = max(df[col].astype(str).map(len).max(), len(col)) + 2
-                worksheet.set_column(i, i, min(max_len, 50))
-            except:
-                worksheet.set_column(i, i, 15)  # Default width if error
 
 
 def main():
     """Example usage"""
     
-    # Configuration
-    FILE1 = 'SampleData1.xlsx'  # Base/old file
-    FILE2 = 'SampleData.xlsx'  # Comparison/new file
+    FILE1 = 'SampleData1.xlsx'
+    FILE2 = 'SampleData.xlsx'
     
-    # Optional: Specify sheets to compare
-    SHEETS = ['Sample Orders']  # None = all sheets, or ['Sheet1', 'Sheet2']
+    SHEETS = ['Sample Orders']
     
-    # Optional: Specify header rows for specific sheets
     HEADER_ROWS = {
         'Sample Orders': 0
     }
     
-    # Optional: Custom labels for the report
-    FILE1_LABEL = "Report Version - 1"
-    FILE2_LABEL = "Report Version - 2"
+    FILE1_LABEL = "Old Version"
+    FILE2_LABEL = "New Version"
     
     try:
-        # Initialize comparator
         comparator = ExcelComparator(
             file1_path=FILE1,
             file2_path=FILE2,
@@ -738,10 +582,7 @@ def main():
             chunk_size=10000
         )
         
-        # Run comparison
         results = comparator.compare_sheets()
-        
-        # Generate report
         report_path = comparator.generate_report()
         
         print(f"\n{'='*60}")
